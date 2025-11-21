@@ -7,6 +7,14 @@
  */
 
 import { createBackend } from '@backstage/backend-defaults';
+import { stringifyEntityRef, DEFAULT_NAMESPACE } from '@backstage/catalog-model';
+
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import { githubAuthenticator } from '@backstage/plugin-auth-backend-module-github-provider';
+import {
+  authProvidersExtensionPoint,
+  createOAuthProviderFactory,
+} from '@backstage/plugin-auth-node';
 
 const backend = createBackend();
 
@@ -25,9 +33,6 @@ backend.add(import('@backstage/plugin-techdocs-backend'));
 
 // auth plugin
 backend.add(import('@backstage/plugin-auth-backend'));
-// See https://backstage.io/docs/backend-system/building-backends/migrating#the-auth-plugin
-backend.add(import('@backstage/plugin-auth-backend-module-guest-provider'));
-// See https://backstage.io/docs/auth/guest/provider
 
 // catalog plugin
 backend.add(import('@backstage/plugin-catalog-backend'));
@@ -62,5 +67,70 @@ backend.add(import('@backstage/plugin-kubernetes-backend'));
 // notifications and signals plugins
 backend.add(import('@backstage/plugin-notifications-backend'));
 backend.add(import('@backstage/plugin-signals-backend'));
+
+const customAuth = createBackendModule({
+  // This ID must be exactly "auth" because that's the plugin it targets
+  pluginId: 'auth',
+  // This ID must be unique, but can be anything
+  moduleId: 'github-auth-provider',
+  register(reg) {
+    reg.registerInit({
+      deps: { providers: authProvidersExtensionPoint },
+      async init({ providers }) {
+        providers.registerProvider({
+          // This ID must match the actual provider config, e.g. addressing
+          // auth.providers.github means that this must be "github".
+          providerId: 'github',
+          // Use createProxyAuthProviderFactory instead if it's one of the proxy
+          // based providers rather than an OAuth based one
+          factory: createOAuthProviderFactory({
+            authenticator: githubAuthenticator,
+            // ...
+            async signInResolver(info, ctx) {
+              const { profile: { displayName } } = info;
+
+              console.log('GitHub profile info:', info);
+
+              // Profiles are not always guaranteed to have an email address.
+              // You can also find more provider-specific information in `info.result`.
+              // It typically contains a `fullProfile` object as well as ID and/or access
+              // tokens that you can use for additional lookups.
+              if (!displayName) {
+                throw new Error('User profile contained no displayName');
+              }
+
+              // You can add your own custom validation logic here.
+              // Logins can be prevented by throwing an error like the one above.
+
+              // This example resolver simply uses the local part of the email as the name.
+              const name = displayName;
+
+              // This helper function handles sign-in by looking up a user in the catalog.
+              // The lookup can be done either by reference, annotations, or custom filters.
+              //
+              // The helper also issues a token for the user, using the standard group
+              // membership logic to determine the ownership references of the user.
+              //
+              // There are a number of other methods on the ctx, feel free to explore them!
+              const userEntity = stringifyEntityRef({
+                kind: 'User',
+                name,
+                namespace: DEFAULT_NAMESPACE,
+              });
+              return ctx.issueToken({
+                claims: {
+                  sub: userEntity,
+                  ent: [userEntity],
+                },
+              });
+            },
+          }),
+        });
+      },
+    });
+  },
+});
+
+backend.add(customAuth);
 
 backend.start();
