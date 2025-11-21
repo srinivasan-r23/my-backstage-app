@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: frontend-team
+  description: Frontend engineering team
+spec:
+  type: team
+  profile:
+    displayName: Frontend Team
+  members:
+    - srini
+    - sush
+  children: []
